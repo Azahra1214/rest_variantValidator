@@ -1,0 +1,75 @@
+Index: application/app_v6.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>\"\"\"\nSimple rest interface for VariantVlidator built using Flask Flask-RESTPlus and Swagger UI\n\"\"\"\n\n# Import modules\nfrom flask import Flask, make_response, request\nfrom flask_restplus import Api, Resource, reqparse, fields, abort\nimport requests\nfrom requests.exceptions import ConnectionError\nfrom dicttoxml import dicttoxml\n\n\"\"\"\nLogging\n\"\"\"\nimport logging\nimport logging.handlers as handlers\nimport time\n\nlogger = logging.getLogger('rest_api')\n# We are setting 2 types of logging. To screen at the level DEBUG\nlogger.setLevel(logging.INFO)\n\n# We will also log to a file\n# Log with a rotating file-handler. This sets the maximum size of the log to 0.5Mb and allows two additional logs\n# The logs are then deleted and replaced in rotation\nlogHandler = handlers.RotatingFileHandler('rest_api.log', maxBytes=500000, backupCount=2)\n# We want to minimise the amount of information we log to capturing bugs\nlogHandler.setLevel(logging.ERROR)\nlogger.addHandler(logHandler)\n\n# Define the application as a Flask app with the name defined by __name__ (i.e. the name of the current module)\n# Most tutorials define application as \"app\", but I have had issues with this when it comes to deployment,\n# so application is recommended\napplication = Flask(__name__)\n\n# Define the API as api\napi = Api(app = application)\n\n# Create a RequestParser object to identify specific content-type requests in HTTP URLs\n# The requestparser allows us to specify arguements passed via a URL, in this case, ....?content-type=application/json\nparser = reqparse.RequestParser()\nparser.add_argument('content-type',\n                    type=str,\n                    help='Accepted:\\n- application/json\\n- text/xml')\n\n\"\"\"\nRegister custom exceptions\n\"\"\"\nclass RemoteConnectionError(Exception):\n    code=504\n\n\"\"\"\nRepresentations\n - Adds a response-type into the \"Response content type\" drop-down menu displayed in Swagger\n - When selected, the APP will return the correct response-header and content type\n - The default for flask-restplus is aspplication/json\n\"\"\"\n# Add additional representations using the @api.representation decorator\n# Requires the module make_response from flask and dicttoxml\n@api.representation('text/xml')\ndef xml(data, code, headers):\n    data = dicttoxml(data)\n    resp = make_response(data, code)\n    resp.headers['Content-Type'] = 'text/xml'\n    return resp\n\n@api.representation('application/json')\ndef json(data, code, headers):\n    resp = make_response(data, code)\n    resp.headers['Content-Type'] = 'application/json'\n    return resp\n\n# Define a name-space to be read Swagger UI which is built in to Flask-RESTPlus\n# The first variable is the path of the namespace the second variable describes the space\nhello_space = api.namespace('hello', description='Simple API that returns a greeting')\n@hello_space.route(\"/\")\n\nclass HelloClass(Resource):\n\n    # Add documentation about the parser\n    @api.doc(parser=parser)\n    def get(self):\n\n        # Collect Arguements\n        args = parser.parse_args()\n\n        # Overides the default response route so that the standard HTML URL can return any specified format\n        if args['content-type'] == 'application/json':\n            # example: http://127.0.0.1:5000/name/name/bob?content-type=application/json\n            return json({\n                \"greeting\" : \"Hello World\"\n            },\n                200, None)\n        # example: http://127.0.0.1:5000/name/name/bob?content-type=text/xml\n        elif args['content-type'] == 'text/xml':\n            return xml({\n                 \"greeting\" : \"Hello World\"\n            },\n                200, None)\n        else:\n            # Return the api default output\n            return {\n                 \"greeting\" : \"Hello World\"\n            }\n\nname_space = api.namespace('name', description='Return a name provided by the user')\n@name_space.route(\"/<string:name>\")\nclass NameClass(Resource):\n\n\n    # Add documentation about the parser\n    @api.doc(parser=parser)\n    def get(self, name):\n\n        # Collect Arguements\n        args = parser.parse_args()\n\n        # Overides the default response route so that the standard HTML URL can return any specified format\n        if args['content-type'] == 'application/json':\n            # example: http://127.0.0.1:5000/name/name/bob?content-type=application/json\n            return json({\n                \"My name is\" : name\n            },\n                200, None)\n        # example: http://127.0.0.1:5000/name/name/bob?content-type=text/xml\n        elif args['content-type'] == 'text/xml':\n            return xml({\n                \"My name is\": name\n            },\n                200, None)\n        else:\n            # Return the api default output\n            return {\n                \"My name is\" : name\n            }\n\nvv_space = api.namespace('VariantValidator', description='VariantValidator APIs')\n@vv_space.route(\"/variantvalidator/<string:genome_build>/<string:variant_description>/<string:select_transcripts>\")\nclass VariantValidatorClass(Resource):\n\n    # Add documentation about the parser\n    @api.doc(parser=parser)\n    def get(self, genome_build, variant_description, select_transcripts):\n\n        # Make a request to the curent VariantValidator rest-API\n        url = '/'.join(['http://rest.variantvalidator.org/variantvalidator', genome_build, variant_description, select_transcripts])\n\n        # Likley error source, Test be switching off internet connection!\n        try:\n            validation = requests.get(url)\n        except ConnectionError:\n            raise RemoteConnectionError('https://rest.variantvalidator.org/variantvalidator currently unavailable')\n        content = validation.json()\n\n        # Collect Arguements\n        args = parser.parse_args()\n\n        # Overides the default response route so that the standard HTML URL can return any specified format\n        if args['content-type'] == 'application/json':\n            # example: http://127.0.0.1:5000.....bob?content-type=application/json\n            return json(content, 200, None)\n        # example: http://127.0.0.1:5000.....?content-type=text/xml\n        elif args['content-type'] == 'text/xml':\n            return xml(content, 200, None)\n        else:\n            # Return the api default output\n            return content\n\n\n\"\"\"\nError handlers\n\"\"\"\n# Simple function that creates an error message that we will log\ndef log_exception(type):\n    # We want to know the arguments passed and the path so we can replicate the error\n    params = dict(request.args)\n    params['path'] = request.path\n    # Create the message and log\n    message = '%s occurred at %s with params=%s' % (type, time.ctime(), params)\n    logger.exception(message, exc_info=True)\n\n\n@application.errorhandler(RemoteConnectionError)\ndef remote_connection_error_handler(e):\n    # Add the Exception to the log ensuring that exc_info is True so that a traceback is also logged\n    log_exception('RemoteConnectionError')\n\n    # Collect Arguments\n    args = parser.parse_args()\n    if args['content-type'] != 'text/xml':\n        return json({'message': str(e)},\n                                504,\n                                None)\n    else:\n        return xml({'message': str(e)},\n                   504,\n                   None)\n\n\n@application.errorhandler(404)\ndef not_found_error_handler(e):\n    # Collect Arguments\n    args = parser.parse_args()\n    if args['content-type'] != 'text/xml':\n        return json({'message': 'Requested Endpoint not found'},\n                                404,\n                                None)\n    else:\n        return xml({'message': 'Requested Endpoint not found'},\n                   404,\n                   None)\n\n\n@application.errorhandler(500)\ndef default_error_handler(e):\n    # Add the Exception to the log ensuring that exc_info is True so that a traceback is also logged\n    log_exception('RemoteConnectionError')\n\n    # Collect Arguments\n    args = parser.parse_args()\n    if args['content-type'] != 'text/xml':\n        return json({'message': 'unhandled error: contact https://variantvalidator.org/contact_admin/'},\n                                500,\n                                None)\n    else:\n        return xml({'message': 'unhandled error: contact https://variantvalidator.org/contact_admin/'},\n                   500,\n                   None)\n\n\n# Allows app to be run in debug mode\nif __name__ == '__main__':\n    application.debug = True # Enable debugging mode\n    application.run(host=\"127.0.0.1\", port=5000) # Specify a host and port fot the app
+===================================================================
+diff --git a/application/app_v6.py b/application/app_v6.py
+--- a/application/app_v6.py	
++++ b/application/app_v6.py	
+@@ -4,7 +4,7 @@
+ 
+ # Import modules
+ from flask import Flask, make_response, request
+-from flask_restplus import Api, Resource, reqparse, fields, abort
++from flask_restx import Api, Resource, reqparse, fields, abort
+ import requests
+ from requests.exceptions import ConnectionError
+ from dicttoxml import dicttoxml
+@@ -72,7 +72,7 @@
+ 
+ # Define a name-space to be read Swagger UI which is built in to Flask-RESTPlus
+ # The first variable is the path of the namespace the second variable describes the space
+-hello_space = api.namespace('hello', description='Simple API that returns a greeting')
++hello_space = api.namespace('Hello Valued User', description='Not that !Simple API that returns a greeting')
+ @hello_space.route("/")
+ 
+ class HelloClass(Resource):
+@@ -88,19 +88,19 @@
+         if args['content-type'] == 'application/json':
+             # example: http://127.0.0.1:5000/name/name/bob?content-type=application/json
+             return json({
+-                "greeting" : "Hello World"
++                "greeting" : "Hello valued user"
+             },
+                 200, None)
+         # example: http://127.0.0.1:5000/name/name/bob?content-type=text/xml
+         elif args['content-type'] == 'text/xml':
+             return xml({
+-                 "greeting" : "Hello World"
++                 "greeting" : "Hello valued user"
+             },
+                 200, None)
+         else:
+             # Return the api default output
+             return {
+-                 "greeting" : "Hello World"
++                 "greeting" : "Hello valued user"
+             }
+ 
+ name_space = api.namespace('name', description='Return a name provided by the user')
+Index: application/app_v2.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>\"\"\"\nSimple rest interface for VariantVlidator built using Flask Flask-RESTPlus and Swagger UI\n\"\"\"\n\n# Import modules\nfrom flask import Flask\nfrom flask_restplus import Api, Resource\n\n# Define the application as a Flask app with the name defined by __name__ (i.e. the name of the current module)\n# Most tutorials define application as \"app\", but I have had issues with this when it comes to deployment,\n# so application is recommended\napplication = Flask(__name__)\n\n# Define the API as api\napi = Api(app = application)\n\n# Define a name-space to be read Swagger UI which is built in to Flask-RESTPlus\n# The first variable is the path of the namespace the second variable describes the space\nhello_space = api.namespace('hello', description='Simple API that returns a greeting')\n@hello_space.route(\"/\")\nclass HelloClass(Resource):\n    def get(self):\n        return {\n            \"greeting\": \"Hello World\"\n        }\n\n\nname_space = api.namespace('name', description='Return a name provided by the user')\n@name_space.route(\"/<string:name>\")\nclass NameClass(Resource):\n    def get(self, name):\n        return {\n            \"My name is\" : name\n        }\n\n\n# Allows app to be run in debug mode\nif __name__ == '__main__':\n    application.debug = True # Enable debugging mode\n    application.run(host=\"127.0.0.1\", port=5000) # Specify a host and port fot the app\n
+===================================================================
+diff --git a/application/app_v2.py b/application/app_v2.py
+--- a/application/app_v2.py	
++++ b/application/app_v2.py	
+@@ -4,7 +4,7 @@
+ 
+ # Import modules
+ from flask import Flask
+-from flask_restplus import Api, Resource
++from flask_restx import Api, Resource
+ 
+ # Define the application as a Flask app with the name defined by __name__ (i.e. the name of the current module)
+ # Most tutorials define application as "app", but I have had issues with this when it comes to deployment,
+@@ -21,7 +21,7 @@
+ class HelloClass(Resource):
+     def get(self):
+         return {
+-            "greeting": "Hello World"
++            "greeting": "Hello Dear user"
+         }
+ 
+ 
